@@ -58,32 +58,24 @@ FastAPI 기반의 비동기 통신 구조입니다.
 
 ---
 
-### 6. 데이터 구조 (ERD - Mermaid)
-사용자 정보와 진단 결과를 관리하는 논리적 구조입니다.
+## 💾 4. 데이터 구조 (Data Structure - ERD)
+
+이 프로젝트는 별도의 RDBMS 없이 **브라우저 로컬 스토리지**와 **메모리/S3(확장 시)**를 활용하는 가벼운 구조를 가집니다. 아래는 논리적인 데이터 흐름을 나타내는 개념적 ERD입니다.
 
 ```mermaid
 erDiagram
-    USER ||--o{ ANALYSIS_RESULT : "performs"
-    ANALYSIS_RESULT ||--|{ COLOR_PALETTE : "suggests"
-
+    USER ||--o{ DIAGNOSIS_HISTORY : generates
     USER {
-        string user_id PK
-        string email
-        datetime created_at
+        string session_id "Browser Local Session"
+        datetime last_visited
     }
-    ANALYSIS_RESULT {
-        int id PK
-        string user_id FK
-        string image_url
-        string season_result
-        float confidence_score
-        datetime analyzed_at
-    }
-    COLOR_PALETTE {
-        int id PK
-        int analysis_id FK
-        string hex_code
-        string color_name
+    DIAGNOSIS_HISTORY {
+        string history_id PK "UUID"
+        string user_session_id FK
+        date diagnosis_date "진단 날짜"
+        string primary_tone "예: Spring Warm"
+        string skin_rgb_hex "피부톤 추출 값"
+        string image_url "분석된 이미지 (Base64 or S3 URL)"
     }
 ```
 ---
