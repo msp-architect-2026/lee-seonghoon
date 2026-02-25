@@ -41,7 +41,6 @@ NextAuth.js를 통해 소셜 로그인(OAuth)한 사용자의 기본 식별 정�
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | Primary Key | 사용자 고유 식별자 (자동생성) |
 | `email` | `VARCHAR(255)` | Unique, Not Null | 사용자 이메일 (로그인 식별용) |
-| `oauth_provider` | VARCHAR(50) | Not Null | 가입 경로 (예: `google`, `kakao`, `naver`) |
 | `created_at` | TIMESTAMP` | Default: `NOW()` | 계정 생성 일시 |
 | `updated_at` | TIMESTAMP | Default: `NOW()` | 계정 정보 최근 수정 일시 |
 
