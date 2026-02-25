@@ -49,6 +49,7 @@ sequenceDiagram
         Frontend->>User: 7. 결과 렌더링 (화면 70% 컬러 팔레트 시각화)
         Frontend->>User: 8. 메이크업, 의상, 맞춤형 헤어 염색 레시피 추천
     end
+```
 
 ---
 
