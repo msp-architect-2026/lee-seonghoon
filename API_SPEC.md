@@ -53,7 +53,7 @@
 | :---| :--- | :--- | :--- |
 | `task_id` | String | `Required` | `/analysis/start`에서 발급받은 작업 ID |
 
-**응답 (Response) - `200 OK` (분석 중일 때)
+**응답 (Response) - `200 OK` (분석 중일 때)**
 ```json
 {
   "success": true,
