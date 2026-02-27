@@ -87,6 +87,7 @@ volumes:
 * **컴포넌트:** Horizontal Pod Autoscaler
 
 * **설정 및 목적:** 사용자 유입 증가 시 폴링 요청과 무거운 이미지 분석 파이프라인의 병목을 방지합니다. 특히 AI Inference 풀만 독립적으로 스케일 아웃하여 GPU 없이 CPU 기반 추론으로 인프라 비용을 절감합니다.
+
 | Target Pod | Scale Out Trigger (임계치) |
 | :--- | :--- |
 | **FastAPI AI Worker** | CPU 사용량 **75%** 또는 Memory 사용량 **70%** 도달 시 |
