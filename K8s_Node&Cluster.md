@@ -18,7 +18,7 @@
  ├─ Next.js (캡처/분석/결과 UI)             ├─ OpenCV (조명 보정)
  ├─ FastAPI (폴링 /analysis/status)         ├─ MediaPipe (랜드마크 추출)
  └─ PostgreSQL (결과 텍스트 저장)           └─ ONNX Runtime (컬러 추론)
-        │                                         │
+        │                                        │
         └─────────── 내부 클러스터 통신 ──────────┘
 ```
 
@@ -113,7 +113,7 @@ VM2는 사용자가 체감하는 모든 속도와 응답성을 책임지는 노�
 | Base Memory | 12288MB(12GB) | In-Memory 이미지 처리(tmpfs) + ONNX 모델 로딩 + MediaPipe |
 | CPU | 4vCPU | OpenCV/MediaPipe/ONNX 멀티스레드 병렬 추론 |
 | 하드디스크 | 60GB (동적 할당 VDI) | ONNX 모델 파일(.onnx), 컨테이너 이미지, 시스템 |
-| 비디오 메모리 | 16MB | 서버용 최소값 |
+| 비디오 메모리 | 16MB() | 서버용 최소값 |
 
 - ⚠️ **VM3**의 메모리가 가장 높은 이유: 이미지를 디스크 대신 RAM(tmpfs)에 올려 처리하는 Privacy-First 설계 때문입니다. ONNX 모델 자체도 수백MB~수GB를 차지할 수 있습니다.
 
@@ -142,17 +142,49 @@ VM3은 퍼스널 컬러 진단 품질을 결정짓는 핵심 연산 노드이자
 ### 전체 네트워크 구성 요약
 
 ```plaintext
-[호스트 PC 브라우저]
-       |
-       | Bridged Adapter (192.168.x.x)
-       ↓
-[VM2: Nginx Ingress - 192.168.56.11]
-       |
-       | Host-Only Network (192.168.56.0/24)
-       ├──→ [VM1: Master - 192.168.56.10]  (ArgoCD, Control Plane)
-       └──→ [VM3: AI Worker - 192.168.56.12] (ONNX, MediaPipe, OpenCV)
+                   [호스트 PC 브라우저]
+    |                                              |
+    | (서비스 접근)                                 | (GitLab Web UI)
+    ↓                                              ↓
+[VM2: Nginx - 56.11]                    [VM4: GitLab - 56.13]
+    |                                              |
+    |    Host-Only Network (192.168.56.0/24)       |
+    |                                              |
+    ├── [VM1: Master/ArgoCD - 56.10] ←── Webhook ──┘
+    |        ↓ GitOps Sync
+    └── [VM3: AI Inference - 56.12]
 
-[VM1/VM2/VM3] ──NAT──→ 인터넷 (패키지, 이미지 pull)
+[모든 VM] ──NAT──→ 인터넷
 ```
 
 ---
+
+### VM4-GitLab CE서버 스펙
+
+| 항목 | 설정값 | 이유 |
+| :--- | :--- | :--- |
+| OS | Ubuntu Server22.04LTS(64bit) | GitLab 공식 지원 OS |
+| Base Memory | 6144 MB (6GB) | GitLab 공식 최소 4GB + Sidekiq/CI Runner 여유분 |
+| CPU | 2 vCPU | GitLab 자체는 I/O 위주, 코어보다 메모리가 중요 |
+| 하드디스크 | 100GB (동적 할당 VDI) | Git 레포지토리, CI 아티팩트, Docker 이미지 레이어 누적 |
+| 비디오 메모리 | 16MB | 서버용 최소값 |
+
+- 하드디스크를 100GB로 넉넉하게 잡는 이유는 GitLab CI가 빌드를 반복할수록 아티팩트와 캐시가 쌓이고, Docker 레이어도 누적되기 때문입니다. 나중에 디스크가 꽉 차서 CI 파이프라인이 멈추는 상황을 방지하기 위함입니다.
+
+**네트워크 어댑터 구성 (VM4)**
+
+| 어댑터 | 종류 | 설정 | 용도 |
+| :--- | :--- | :--- | :--- |
+| 어댑터1 | NAT | DHCP자동 | 인터넷접속(GitLab 패키지 설치, Runner 이미지 pull)
+| 어댑터2 | Host-Only Adapter | 고정IP:`192.168.56.13` | VM1(ArgoCD)과 Webhook 통신, VM2/VM3 이미지 push/pull |
+| 어댑터3 | Bridge Adapter | DHCP | 호스트 PC 브라우저에서 GitLab Web UI 접근 |
+
+**VM4의 할당 기능 상세**
+
+**GitLab CE (Core 서버):** 소스코드 저장소 역할입니다. Next.js 프론트엔드 코드, FastAPI 백엔드 코드, Helm Chart YAML, ONNX 모델 관련 스크립트가 모두 이 VM의 GitLab 레포지토리에서 관리됩니다. 개발자가 코드를 `git push`하는 순간 이후 모든 자동화의 출발점이 됩니다.
+**GitLab CI Runner:** `.gitlab-ci.yml`에 정의된 파이프라인을 실제로 실행하는 에이전트입니다. 이 프로젝트에서 Runner가 수행하는 작업은 구체적으로 다음과 같습니다. Next.js 빌드 및 Docker 이미지 생성, FastAPI 이미지 빌드, 빌드된 이미지에 버전 태그(예: `v1.0.3`) 부착 후 컨테이너 레지스트리에 push, Helm Chart의 `values.yaml`에서 image tag 값을 새 버전으로 자동 업데이트한 뒤 commit합니다.
+**GitLab Container Registry:** 빌드된 Docker 이미지를 저장하는 내부 레지스트리입니다. VM2/VM3의 K8s 파드들이 이 레지스트리에서 이미지를 pull하여 컨테이너를 실행합니다. 외부 Docker Hub를 쓰지 않고 내부 레지스트리를 사용하므로 이미지 pull 속도가 빠르고 외부 의존성이 줄어듭니다.
+**ArgoCD Webhook 수신 트리거:** GitLab CI가 `values.yaml`의 image tag를 업데이트하고 commit/push하면, GitLab이 VM1의 ArgoCD로 Webhook을 발송합니다. ArgoCD는 이 신호를 받고 변경된 Helm Chart를 K8s 클러스터에 즉시 적용(Sync)합니다. 이것이 `git push` 한 번으로 VM2/VM3의 파드가 무중단 교체되는 GitOps 자동화의 전체 흐름입니다.
+
+
+- 💡 호스트 PC RAM이 32GB라면 VM에 30GB를 할당하면 호스트 OS가 불안정해질 수 있습니다. 호스트 OS용으로 최소 6~8GB는 남겨두어야 하므로, 호스트 RAM이 32GB라면 VM3의 메모리를 10GB로 줄이거나, VM2를 6GB로 낮추는 조정이 필요합니다. 가능하다면 호스트 RAM 40GB 이상 환경을 권장합니다.
