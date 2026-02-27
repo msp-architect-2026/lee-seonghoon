@@ -4,7 +4,8 @@
 
 이 프로젝트는**사용자 얼굴 사진-> AI퍼스널 컬러 진단-> 결과 큐레이션 제공**하는 **Mobile-First**웹앱입니다.
 전체 흐름은 크게 5단계로 구성됩니다.
-```mermaid
+
+mermaid
 graph TD
     User([사용자 모바일 브라우저]) -- HTTPS 접속 --> Ingress
 
@@ -32,7 +33,7 @@ graph TD
 
         FastAPI_Web <==>|내부 클러스터 통신| FastAPI_AI
     end
-```
+
 
 **핵심 데이터 흐름**
 
