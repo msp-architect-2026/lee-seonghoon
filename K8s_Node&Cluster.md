@@ -67,7 +67,7 @@
 
 * **설정 및 목적:** AI 분석 파드 배포 시 볼륨 매체를 메모리(RAM)로 지정합니다. OpenCV 등 불가피하게 파일 경로를 요구하는 라이브러리 사용 시, 물리 디스크가 아닌 RAM 디스크를 제공하여 프로세스 종료나 파드 재시작 시 원본 얼굴 이미지가 물리적으로 완전 증발하도록 강제합니다(유출 원천 차단).
 ```YAML
-  * # K8s Deployment 볼륨 설정 예시 (Privacy-First)
+# K8s Deployment 볼륨 설정 예시 (Privacy-First)
 volumes:
   - name: mem-temp-dir
     emptyDir:
