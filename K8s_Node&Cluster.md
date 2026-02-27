@@ -5,35 +5,33 @@
 이 프로젝트는**사용자 얼굴 사진-> AI퍼스널 컬러 진단-> 결과 큐레이션 제공**하는 **Mobile-First**웹앱입니다.
 전체 흐름은 크게 5단계로 구성됩니다.
 
-mermaid
-graph TD
-    User([사용자 모바일 브라우저]) -- HTTPS 접속 --> Ingress
+[사용자 모바일 브라우저]
 
-    subgraph CI/CD ["배포 파이프라인"]
-        GitLab([GitLab CI]) -. 빌드 완료 트리거 .-> Master
-    end
-
-    subgraph Cluster ["Kubernetes Cluster"]
-        Master[VM1: Master Node / ArgoCD]
+        │ HTTPS 접속
         
-        Master -- GitOps 배포 명령 --> VM2
-        Master -- GitOps 배포 명령 --> VM3
+        ▼
+        
+[VM1: Master Node / ArgoCD] ◄── (GitLab CI 빌드 완료 시 배포 트리거)
 
-        subgraph VM2 ["VM2: Web/API Worker"]
-            Ingress[Nginx Ingress <br/> (L7 라우팅)] --> NextJS[Next.js <br/> (캡처/분석/결과 UI)]
-            Ingress --> FastAPI_Web[FastAPI <br/> (폴링 /analysis/status)]
-            FastAPI_Web --> DB[(PostgreSQL <br/> 결과 텍스트 저장)]
-        end
+        │ GitOps 배포 명령
+        
+        ├─────────────────────────────────────────┐
+        
+        ▼                                         ▼
+        
+[VM2: Web/API Worker]                     [VM3: AI Inference Worker]
 
-        subgraph VM3 ["VM3: AI Inference Worker"]
-            FastAPI_AI[FastAPI BackgroundTasks] --> OpenCV[OpenCV <br/> (조명 보정)]
-            OpenCV --> MediaPipe[MediaPipe <br/> (랜드마크 추출)]
-            MediaPipe --> ONNX[ONNX Runtime <br/> (컬러 추론)]
-        end
-
-        FastAPI_Web <==>|내부 클러스터 통신| FastAPI_AI
-    end
-
+ ├─ Nginx Ingress (L7 라우팅)               ├─ FastAPI BackgroundTasks
+ 
+ ├─ Next.js (캡처/분석/결과 UI)             ├─ OpenCV (조명 보정)
+ 
+ ├─ FastAPI (폴링 /analysis/status)         ├─ MediaPipe (랜드마크 추출)
+ 
+ └─ PostgreSQL (결과 텍스트 저장)           └─ ONNX Runtime (컬러 추론)
+ 
+        │                                         │
+        
+        └─────────── 내부 클러스터 통신 ──────────┘
 
 **핵심 데이터 흐름**
 
