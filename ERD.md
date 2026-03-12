@@ -1,97 +1,174 @@
-# 🗄️ Database ERD: Personal Color AI Analysis Application
+# Database ERD: Personal Color AI Analysis Application
 
-본 문서는 퍼스널 컬러 진단 애플리케이션의 데이터베이스 구조를 설계하기 위해 7단계 ERD 작성 방법론에 따라 작성된 데이터 모델링 문서입니다.
+본 문서는 퍼스널 컬러 진단 애플리케이션의 실제 구현된 데이터베이스 구조를 정의합니다.  
+Phase 5 완료 기준으로 작성되었으며, 실제 PostgreSQL StatefulSet에 배포된 스키마를 기준으로 합니다.
 
-## 가. 요구사항 수집 (Requirements Gathering)
-**목표:** 사용자 식별, 진단 이력 관리, 맞춤형 큐레이션 결과 저장을 위한 관계형 데이터 구조 설계.
+---
+
+## 1. 요구사항 수집 (Requirements Gathering)
+
+**목표:** AI 분석 작업 상태 추적, 진단 결과 저장, 진단 이력 관리를 위한 데이터 구조 설계.
 
 **핵심 비즈니스 규칙:**
-* **Privacy-First:** 사용자의 안면 원본 이미지는 분석 직후 메모리에서 파기되며, DB에 절대 저장되지 않습니다.
-* **소셜 로그인:** 자체 비밀번호 관리 없이 OAuth(NextAuth) 기반으로 사용자를 식별합니다.
-* **이력 관리:** 사용자는 마이페이지에서 과거의 진단 결과(컬러, 메이크업, 헤어 레시피)를 누적해서 조회할 수 있어야 합니다.
 
-## 나. 엔티티 식별 (Entity Identification)
-요구사항을 바탕으로 다음 3가지 핵심 엔티티를 도출했습니다.
+| 규칙 | 내용 |
+|------|------|
+| **Privacy-First** | 안면 원본 이미지는 분석 직후 메모리(`del image_bytes`)에서 파기. DB에 절대 저장 금지 |
+| **비동기 작업 추적** | 이미지 수신 즉시 job_id 발급 → BackgroundTask 분석 → 상태값(status) 폴링 방식 |
+| **이력 관리** | 마이페이지에서 완료된(`status=done`) 진단 결과를 누적 조회 가능 |
+| **단일 테이블 설계** | 작업 상태와 결과를 하나의 `jobs` 테이블로 통합 관리 (Phase 5 구현 기준) |
 
-1.  **USER (사용자):** 소셜 로그인 인증을 통과한 사용자 정보.
-2.  **ANALYSIS_HISTORY (진단 이력):** 사용자가 앱을 통해 AI 분석을 수행한 메타데이터 및 진행 상태.
-3.  **CURATION_RESULT (큐레이션 결과):** AI 추론 완료 후 도출된 최종 퍼스널 컬러 및 맞춤형 스타일링 정보.
+---
 
-## 다. 속성 정의 (Attribute Definition)
-각 엔티티의 세부 데이터 속성과 타입을 정의합니다. (PostgreSQL 기준)
+## 2. 엔티티 식별 (Entity Identification)
 
-### 1. USER
-| Column Name | Data Type | Constraint | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | UUID | PK | 사용자 고유 식별자 |
-| `oauth_id` | VARCHAR | NOT NULL | OAuth 제공자측 고유 ID |
-| `email` | VARCHAR | Nullable | 사용자 이메일 |
-| `created_at` | TIMESTAMP | NOT NULL | 가입 일시 |
+Phase 5 실제 구현 기준으로 **단일 테이블(`jobs`)** 구조로 운영됩니다.
 
-### 2. ANALYSIS_HISTORY
-| Column Name | Data Type | Constraint | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | UUID | PK | 진단 이력 고유 식별자 (API의 task_id와 동일) |
-| `user_id` | UUID | FK | 요청한 사용자 ID |
-| `status` | VARCHAR | NOT NULL | 분석 상태 (processing, completed, failed) |
-| `analyzed_at` | TIMESTAMP | NOT NULL | 분석 완료 일시 |
+> **설계 배경:**  
+> 초기 설계(USER, ANALYSIS_HISTORY, CURATION_RESULT 분리)에서  
+> 운영 복잡도를 줄이기 위해 `jobs` 단일 테이블로 통합 구현되었습니다.  
+> Phase 6 이후 인증(NextAuth) 연동 시 USER 테이블 추가 예정입니다.
 
-### 3. CURATION_RESULT
-| Column Name | Data Type | Constraint | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | UUID | PK | 결과 고유 식별자 |
-| `history_id` | UUID | FK | 연결된 진단 이력 ID |
-| `season_type` | VARCHAR | NOT NULL | 최종 도출된 4계절 톤 (예: Summer Cool Mute) |
-| `main_colors` | JSONB | NOT NULL | 화면을 채울 핵심 컬러 헥스(Hex) 코드 배열 |
-| `worst_colors` | JSONB | NOT NULL | 피해야 할 컬러 헥스 코드 배열 |
-| `makeup_tip` | JSONB | NOT NULL | 립, 섀도우, 블러셔 추천 텍스트 |
-| `hair_recipe` | JSONB | NOT NULL | 컬러명, 믹스 비율, 탈색 권장 횟수 등 염색 레시피 |
-| `styling_tip` | TEXT | NOT NULL | 종합 패션/스타일링 가이드 |
+---
 
-## 라. 관계 정의 (Relationship Definition)
-엔티티 간의 비즈니스 논리적 상호작용을 정의합니다.
+## 3. 속성 정의 (Attribute Definition)
 
-* **USER ↔ ANALYSIS_HISTORY (1 : N)**
-    * 한 명의 사용자는 여러 번의 퍼스널 컬러 진단을 수행할 수 있습니다.
-    * 하나의 진단 이력은 반드시 한 명의 사용자에게 속합니다.
-* **ANALYSIS_HISTORY ↔ CURATION_RESULT (1 : 1)**
-    * 성공적으로 완료된 하나의 진단 이력은 정확히 하나의 상세 큐레이션 결과를 가집니다.
+### jobs 테이블 (실제 운영 중)
 
-## 마. ERD 작성 (ERD Visualization)
-위에서 정의한 엔티티, 속성, 관계를 나타내는 시각적 ERD입니다. GitHub 환경에서 자동으로 다이어그램으로 렌더링됩니다.
+| Column | Data Type | Constraint | Description |
+|--------|-----------|------------|-------------|
+| `job_id` | TEXT | PK | 분석 작업 고유 식별자 (UUID) |
+| `status` | TEXT | NOT NULL, DEFAULT 'queued' | 작업 상태 (queued / processing / done / failed) |
+| `result_id` | TEXT | Nullable | 완료 시 생성되는 결과 식별자 |
+| `result` | JSONB | Nullable | AI 분석 결과 전체 (완료 시 저장) |
+| `error` | TEXT | Nullable | 실패 시 오류 메시지 |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | 작업 생성 일시 |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT NOW() | 작업 최종 수정 일시 |
+
+### result JSONB 컬럼 상세 구조
+
+```json
+{
+  "result_id": "uuid",
+  "season": "autumn",
+  "label": "가을 웜톤",
+  "description": "깊고 따뜻한 캐멜, 테라코타, 올리브 계열",
+  "palette": ["#D2691E", "#CD853F", "#8B4513", "#556B2F", "#DAA520"],
+  "makeup": {
+    "lip": "따뜻한 브라운/핑크 계열",
+    "shadow": "브라운 계열"
+  },
+  "hair": "골든 브라운 (골든 8 : 코퍼 2)",
+  "fashion": "내추럴 & 웜, 어스톤 & 카키"
+}
+```
+
+### status 상태값 정의
+
+| status | 의미 | 전이 조건 |
+|--------|------|----------|
+| `queued` | 대기 중 | job_id 발급 직후 |
+| `processing` | AI Worker 분석 중 | BackgroundTask 시작 시 |
+| `done` | 분석 완료 | AI Worker 결과 반환 시 |
+| `failed` | 분석 실패 | AI Worker 오류 발생 시 |
+
+---
+
+## 4. 관계 정의 (Relationship Definition)
+
+현재(Phase 5) 구현은 `jobs` 단일 테이블로, 엔티티 간 관계는 **result JSONB 컬럼 내부**에서 처리됩니다.
+
+**Phase 6 이후 확장 예정 관계:**
+
+| 관계 | 카디널리티 | 설명 |
+|------|-----------|------|
+| USER ↔ jobs | 1 : N | 한 사용자가 여러 번 진단 가능 (NextAuth 연동 후 user_id 컬럼 추가 예정) |
+
+---
+
+## 5. ERD 다이어그램
+
+### 현재 구현 (Phase 5 — 단일 테이블)
 
 ```mermaid
 erDiagram
-    USER ||--o{ ANALYSIS_HISTORY : "places"
-    ANALYSIS_HISTORY ||--o| CURATION_RESULT : "generates"
+    JOBS {
+        text job_id PK "분석 작업 ID (UUID)"
+        text status "queued / processing / done / failed"
+        text result_id "결과 ID (완료 시 생성)"
+        jsonb result "AI 분석 결과 전체"
+        text error "실패 시 오류 메시지"
+        timestamptz created_at "작업 생성 일시"
+        timestamptz updated_at "작업 최종 수정 일시"
+    }
+```
+
+### Phase 6 이후 확장 설계 (NextAuth 연동 시)
+
+```mermaid
+erDiagram
+    USER ||--o{ JOBS : "requests"
 
     USER {
-        uuid id PK
-        varchar oauth_id
-        varchar email
-        timestamp created_at
+        uuid id PK "사용자 고유 식별자"
+        varchar oauth_id "OAuth 제공자 고유 ID"
+        varchar email "사용자 이메일"
+        timestamptz created_at "가입 일시"
     }
 
-    ANALYSIS_HISTORY {
-        uuid id PK "Task ID"
-        uuid user_id FK
-        varchar status "processing, completed"
-        timestamp analyzed_at
-    }
-
-    CURATION_RESULT {
-        uuid id PK
-        uuid history_id FK
-        varchar season_type
-        jsonb main_colors
-        jsonb worst_colors
-        jsonb makeup_tip
-        jsonb hair_recipe
-        text styling_tip
+    JOBS {
+        text job_id PK "분석 작업 ID (UUID)"
+        uuid user_id FK "요청한 사용자 ID (Phase 6 추가 예정)"
+        text status "queued / processing / done / failed"
+        text result_id "결과 ID (완료 시 생성)"
+        jsonb result "AI 분석 결과 전체"
+        text error "실패 시 오류 메시지"
+        timestamptz created_at "작업 생성 일시"
+        timestamptz updated_at "작업 최종 수정 일시"
     }
 ```
 
 ---
 
-본 ERD 문서는 애플리케이션의 백엔드(FastAPI) ORM 모델 구축 및 DB 스키마 생성(Migration)의 기준 자료로 활용됨.
-Kubernetes 환경에 배포될 PostgreSQL Pod의 초기 Init Script 작성 시 본 구조 참조.
+## 6. 실제 DDL (PostgreSQL — Phase 5 운영 중)
+
+```sql
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id      TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'queued',
+    result_id   TEXT,
+    result      JSONB,
+    error       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+> **startup 시 자동 실행됨** — Backend Pod 기동 시 테이블 미존재 시 자동 생성 (10회 재시도 로직 포함)
+
+---
+
+## 7. 인프라 구성 (PostgreSQL StatefulSet)
+
+| 리소스 | 이름 | 설정 |
+|--------|------|------|
+| StorageClass | local-storage | `kubernetes.io/no-provisioner`, WaitForFirstConsumer |
+| PersistentVolume | postgresql-pv | 5Gi, local type, VM2(ubuntu-k8s-web) nodeAffinity 고정 |
+| PersistentVolumeClaim | postgresql-pvc | 5Gi, ReadWriteOnce |
+| StatefulSet | postgresql | `postgres:15-alpine`, PGDATA: `/var/lib/postgresql/data/pgdata` |
+| Service | postgresql-svc | ClusterIP, 5432 |
+| 데이터 경로 | VM2 | `/data/postgresql` |
+| 연결 문자열 | — | `postgresql://colorai:****@postgresql-svc:5432/colorai_db` |
+
+> ⚠️ `persistentVolumeReclaimPolicy: Retain` — Pod 삭제 후에도 데이터 영구 보존
+
+---
+
+## 8. E2E 테스트 검증 결과 (Phase 5)
+
+| 검증 항목 | 결과 |
+|-----------|------|
+| POST /api/analyze → jobs 테이블 status=queued 저장 | ✅ |
+| AI 분석 완료 → status=done + result JSONB 저장 | ✅ |
+| GET /api/history → status=done 행만 반환 | ✅ |
+| Pod 재시작 후 데이터 보존 (PV Retain) | ✅ |
