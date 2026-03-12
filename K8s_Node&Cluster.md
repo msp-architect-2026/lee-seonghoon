@@ -1,190 +1,420 @@
-### 프로젝트 전체 흐름 분석 및 **VirtualBox VM** 구성 가이드
+# K8s 노드 & 클러스터 구성: Personal Color AI Analysis
 
-**프로젝트 전체 흐름 분석**
+본 문서는 온프레미스 VirtualBox 환경에서 실제 구축된 K8s 클러스터의 VM 구성, 네트워크 설계, 역할 분담을 정의합니다.  
+Phase 5 완료 기준으로 작성되었습니다.
 
-이 프로젝트는**사용자 얼굴 사진-> AI퍼스널 컬러 진단-> 결과 큐레이션 제공**하는 **Mobile-First**웹앱입니다.
-전체 흐름은 크게 5단계로 구성됩니다.
+---
 
-```Plaintext
-[사용자 모바일 브라우저]
-        │ HTTPS 접속
-        ▼
-[VM1: Master Node / ArgoCD] ◄── (GitLab CI 빌드 완료 시 배포 트리거)
-        │ GitOps 배포 명령
-        ├─────────────────────────────────────────┐
-        ▼                                         ▼
-[VM2: Web/API Worker]                     [VM3: AI Inference Worker]
- ├─ Nginx Ingress (L7 라우팅)               ├─ FastAPI BackgroundTasks
- ├─ Next.js (캡처/분석/결과 UI)             ├─ OpenCV (조명 보정)
- ├─ FastAPI (폴링 /analysis/status)         ├─ MediaPipe (랜드마크 추출)
- └─ PostgreSQL (결과 텍스트 저장)           └─ ONNX Runtime (컬러 추론)
-        │                                        │
-        └─────────── 내부 클러스터 통신 ──────────┘
+## 물리 인프라 개요
+
+| 항목 | 값 |
+|------|-----|
+| 물리 PC | 2대 (PC-A, PC-B) |
+| 공유기 게이트웨이 | 192.168.10.1 |
+| PC-A 호스트 IP | 192.168.10.75 |
+| PC-B 호스트 IP | 192.168.10.39 |
+| VM 총 개수 | 4대 |
+| VM 어댑터1 | NAT (enp0s3 / 10.0.2.15) — 외부 인터넷 |
+| VM 어댑터2 | 브리지 (enp0s8) — 클러스터 내부 통신 (무작위 모드: 모두 허용) |
+
+> ⚠️ **권장 사양:** 호스트 PC RAM 32GB 이상, 12코어 이상 CPU, SSD 여유공간 200GB 이상  
+> RAM 32GB 환경이라면 호스트 OS용 6~8GB를 반드시 남겨두세요.
+
+---
+
+## VM 구성 전체 요약
+
+| VM | 호스트명 | IP (브리지 고정) | 물리 PC | 역할 |
+|----|----------|-----------------|---------|------|
+| VM1 | ubuntu-k8s-master | 192.168.10.245 | PC-A | K8s Master, ArgoCD, Helm 관리 |
+| VM2 | ubuntu-k8s-web | 192.168.10.246 | PC-B | Nginx Ingress, Next.js, FastAPI, PostgreSQL |
+| VM3 | ubuntu-k8s-ai | 192.168.10.247 | PC-B | AI Worker (OpenCV, MediaPipe, ONNX) |
+| VM4 | ubuntu-k8s-gitlab | 192.168.10.248 | PC-A | GitLab CE, CI Runner, Container Registry |
+
+---
+
+## 네트워크 설계
+
+| 구분 | 값 |
+|------|-----|
+| K8s Pod 대역 | 10.244.0.0/16 (Flannel) |
+| K8s Service 대역 | 10.96.0.0/12 |
+| MetalLB IP 풀 | 192.168.10.136 ~ 192.168.10.152 |
+| Nginx Ingress External IP | 192.168.10.136 (MetalLB 할당 완료) |
+| ArgoCD NodePort | 192.168.10.246:30080 |
+
+### 트래픽 흐름
+
+```
+사용자
+  │
+  ▼
+MetalLB (192.168.10.136)           ← 외부 IP 할당 (베어메탈 LoadBalancer)
+  │
+  ▼
+Nginx Ingress Controller (VM2)     ← L7 라우팅
+  ├── /          → Next.js Pod     [color-ai-frontend:3000, VM2]
+  └── /api       → FastAPI Pod     [color-ai-backend:8000, VM2]
+                       │
+                       ├── AI Worker (ClusterIP) [color-ai-ai-worker:8001, VM3]
+                       └── PostgreSQL (ClusterIP) [postgresql-svc:5432, VM2]
 ```
 
-**핵심 데이터 흐름**
+### Pod 외부 인터넷 연결 (필수 설정)
 
-1. `/login` : **NextAuth → OAuth** 소셜 로그인 **→ JWT** 발급
-2. `/capture` : 카메라 스트림 → 프론트 조명 점수 측정 → `POST /analysis/start` (multipart)
-3. `202 Accepted` 즉시 반환 → `task_id` 발급 → **VM3**에서 백그라운드 **AI** 분석 시작
-4. `/analyzing` : 0.5초 간격 폴링 (`GET /analysis/status/{task_id}`) + 레이저 스캔 애니메이션
-5. `status: completed` 수신 → `/result/[id]` 렌더링 → 헥스 팔레트 + 헤어/메이크업 큐레이션
-6. 결과 텍스트만 **PostgreSQL** 저장, 원본 이미지는 메모리에서 즉시 파기
+> ⚠️ Pod 트래픽이 enp0s8(브리지)로 나가면 공유기에서 차단됨 → iptables MASQUERADE 필수
 
----
-
-### VirtualBox VM 구성 계획
-**VM 총 개수: 3대**
-
-| **VM** | **역할** | **K8s역할** |
-| :--- | :--- | :--- |
-| VM1 | Master Node | Control Plane + ArgoCD |
-| VM2 | Worker Node-Web/API Pool | Next.js+FastAPI(폴링)+PostgreSQL+Nginx Ingress |
-| VM3 | Worker Node-AI Inference Pool | FastAPI_BackgroundTasks+OpenCV+MediaPipe+ONNX |
-
-- ⚠️ 호스트PC 권장사양 : RAM 32GB 이상, 12코어 이상 CPU, SSD 여유공간 200GB 이상
-
----
-
-### 각 VM 상세 스펙
-**VM1 — Master Node (Control Plane + ArgoCD)**
-
-| 항목 | 설정값 | 이유 |
-| :--- | :--- | :--- |
-| OS | Ubuntu Server 22.04 LTS(64-bit) | K8s 공식 지원 LTS |
-| Base Memory | 4096MB(4GB) | etcd+API Server+Scheduler 구동 최소선 |
-| CPU | 2vCPU | Control Plane은 연산보단 안정성 우선 |
-| 하드디스크 | 50GB(동적할당VDI) | ArgoCD 이미지, etcd스냅샷, kubeconfig 저장 |
-| 비디오 메모리 | 16MB(GUI불필요,최소) | 서버용이므로 최소값 |
-| 스왑 | 2GB 별도 파티션 권장 | K8s는 swap off필요, 파티션은 별도 관리 |
-
- * **네트워크 어댑터 구성**
-
-| 어댑터 | 종류 | 설정 | 용도 |
-| :--- | :--- | :--- | :--- |
-| 어댑터1 | NAT | DHCP자동 | 인터넷접속(apt,helm,argocd이미지 pull 등)
-| 어댑터2 | Host-Only Adapter | 고정IP:`192.168.56.10` | VM간 K8s클러스터 내부 통신 전용 |
-
-**할당 기능 상세**
-VM1은 전체 K8s 클러스터의 두뇌이자 GitOps 배포의 종착점입니다.
-
-* **K8s Control Plane 구성요소 전담**: `kube-apiserver`(모든 kubectl/API 요청 수신), `etcd`(클러스터 전체 상태 데이터 KV 저장소), `kube-scheduler`(어떤 워커노드에 파드를 올릴지 결정), `kube-controller-manager`(ReplicaSet, Deployment 등 상태 조정 루프 실행) 4가지를 모두 이 노드에서 실행합니다.
-* **ArgoCD 설치 및 운영**: GitLab 레포지토리의 `helm/` 디렉토리를 감시(Watch)하다가 `values.yaml` 또는 Helm Chart에 변경이 감지되면, 자동으로 워커 노드에 Rolling Update를 실행합니다. 개발자가 `git push`만 하면 VM2/VM3의 파드가 무중단으로 교체됩니다.
-* **Helm 관리 포인트**: 각 서비스(Next.js, FastAPI, PostgreSQL, ONNX Worker)의 Helm Chart 템플릿과 `values-dev.yaml`, `values-prod.yaml` 환경별 변수 파일을 이 노드의 ArgoCD가 읽어 배포를 조율합니다.
-* **kubeadm init 실행 노드**: 최초 클러스터 생성 시 `kubeadm init --apiserver-advertise-address=192.168.56.10 --pod-network-cidr=10.244.0.0/16` 명령을 이 VM에서 실행하며, 이후 **VM2/VM3**은 `kubeadm join`으로 이 노드에 합류합니다.
-
----
-
-**VM2 — Worker Node: Web/API Pool**
-| 항목 | 설정값 | 이유 |
-| :--- | :--- | :--- |
-| OS | Ubuntu Server22.04LTS(64bit) | 동일 OS로 클러스터 일관성 확보 |
-| Base Memory | 8192MB(8GB) | Next.js SSR+FastAPI+PostgreSQL 동시 구동 |
-| CPU | 4vCPU | Nginx+Next.js SSR+폴링 처리 동시성 확보 |
-| 하드디스크 | 80GB(동적할당 VDI) | PostgreSQL 데이터볼륨+컨테이너 이미지 저장 |
-| 비디오 메모리 | 16MB | 서버용 최소값 |
-
-* **네트워크 어댑터 구성 (VM2)**
-
-| 어댑터 | 종류 | 설정 | 용도 |
-| :--- | :--- | :--- | :--- |
-| 어댑터1 | NAT | DHCP자동 | 인터넷접속(이미지 pull, npm 패키지)
-| 어댑터2 | Host-Only Adapter | 고정IP:`192.168.56.11` | K8s 클러스터 내부 통신 (VM1/VM3과 연결) |
-| 어댑터3 | Bridge Adapter | DHCP (호스트 네트워크 공유) | 호스트 PC 브라우저 → Nginx Ingress 직접 접근 테스트용 |
-
-- 어댑터 3(Bridged)은 개발 환경에서 호스트 브라우저로 `http://192.168.x.x`로 직접 접근해 UI 테스트를 할 때 사용합니다.
-
-**할당 기능 상세**
-VM2는 사용자가 체감하는 모든 속도와 응답성을 책임지는 노드입니다. AI 연산을 철저히 배제하고 I/O 중심 작업만 담당합니다.
-
-* **Nginx Ingress Controller:** 외부에서 들어오는 모든 HTTPS 트래픽의 단일 진입점입니다. 경로 기반 라우팅 규칙으로 `/api/*` 요청은 FastAPI 파드로, 그 외 모든 경로는 Next.js 파드로 전달합니다. TLS 인증서 처리(SSL Termination)도 이 계층에서 수행하여 파드들이 암호화/복호화 연산 부담을 지지 않도록 합니다.
-* **Next.js 파드:** `/login`, `/capture`, `/analyzing`, `/result/[id]`, `/mypage/history` 5개 핵심 화면의 SSR/SSG 렌더링을 담당합니다. 특히 `/analyzing` 화면에서 v0.app 기반 레이저 스캔 애니메이션이 60fps로 끊김 없이 렌더링되도록 이 노드의 CPU 자원이 AI Worker와 분리되어 있습니다. Zustand로 관리되는 조명 상태, 분석 진행률 등 전역 상태를 폴링 결과에 따라 실시간 업데이트합니다.
-* **FastAPI 폴링 전담 인스턴스:** `GET /analysis/status/{task_id}` 엔드포인트만 처리하는 경량 역할입니다. 프론트엔드가 0.5초 간격으로 보내는 상태 확인 요청을 받아 PostgreSQL에서 작업 상태를 조회한 뒤 `processing` 또는 `completed` + 결과 JSON을 반환합니다. AI 연산이 전혀 없는 순수 DB 조회 작업이므로 VM2에 배치합니다.
-* **PostgreSQL (StatefulSet):** 사용자 계정 정보, 진단 결과(season_type, 헥스 코드, 큐레이션 텍스트), 이력 데이터를 저장합니다. 원본 이미지는 절대 저장하지 않으며, `history_id`, `analyzed_at`, `season_type`, `thumbnail_color` 등 텍스트성 메타데이터만 보관합니다. StatefulSet으로 배포하여 파드 재시작 시에도 데이터 볼륨(PersistentVolumeClaim)이 유지되도록 구성합니다. 하드디스크 80GB 중 약 20GB를 DB 전용 PV로 할당하는 것을 권장합니다.
-* **K8s Node Taint 설정:** `kubectl taint nodes vm2 workload=web:NoSchedule`로 AI 관련 파드가 이 노드에 배치되지 않도록 강제합니다.
-* **HPA 설정:** CPU 60% 초과 시 Next.js 파드 자동 스케일아웃 (최소 1개 → 최대 3개).
-
----
-
-**VM3 — Worker Node: AI Inference Pool**
-| 항목 | 설정값 | 이유 |
-| :--- | :--- | :--- |
-| OS | Ubuntu Server22.04LTS(64bit) | 동일 OS 일관성 |
-| Base Memory | 12288MB(12GB) | In-Memory 이미지 처리(tmpfs) + ONNX 모델 로딩 + MediaPipe |
-| CPU | 4vCPU | OpenCV/MediaPipe/ONNX 멀티스레드 병렬 추론 |
-| 하드디스크 | 60GB (동적 할당 VDI) | ONNX 모델 파일(.onnx), 컨테이너 이미지, 시스템 |
-| 비디오 메모리 | 16MB() | 서버용 최소값 |
-
-- ⚠️ **VM3**의 메모리가 가장 높은 이유: 이미지를 디스크 대신 RAM(tmpfs)에 올려 처리하는 Privacy-First 설계 때문입니다. ONNX 모델 자체도 수백MB~수GB를 차지할 수 있습니다.
-
-**네트워크 어댑터 구성 (VM3)**
-
-| 어댑터 | 종류 | 설정 | 용도 |
-| :--- | :--- | :--- | :--- |
-| 어댑터1 | NAT | DHCP자동 | 인터넷접속(ONNX 모델 다운로드, pip install)
-| 어댑터2 | Host-Only Adapter | 고정IP:`192.168.56.12` | K8s 클러스터 내부 통신 전용 |
-
-- VM3은 외부에서 직접 접근할 필요가 없으므로 Bridged 어댑터가 불필요합니다. 모든 요청은 VM2의 FastAPI를 통해 내부 통신으로만 전달됩니다.
-
-**할당 기능 상세**
-VM3은 퍼스널 컬러 진단 품질을 결정짓는 핵심 연산 노드이자 Privacy-First 원칙이 물리적으로 강제되는 공간입니다.
-
-* **FastAPI BackgroundTasks 워커:** `POST /analysis/start` 요청이 VM2에서 수신되면, VM2의 FastAPI가 VM3의 이 워커에 작업을 위임합니다. `task_id`를 생성하고 즉시 `202 Accepted`를 반환한 뒤, BackgroundTasks를 통해 아래의 AI 파이프라인을 논블로킹으로 실행합니다. 파이프라인 완료 시 결과를 PostgreSQL(VM2)에 write하고 task 상태를 `completed`로 업데이트합니다.
-* **OpenCV 전처리 모듈:** 업로드된 이미지의 조명 환경을 정규화합니다. 화이트밸런스 알고리즘(Gray World 또는 Retinex 계열)을 적용하여 형광등, 자연광, 실내조명 등 어떤 환경에서 촬영해도 피부 톤 RGB 값이 일관된 기준으로 추출되도록 보정합니다. 프론트에서 전송된 `lighting_score` 값이 임계치 미만이면 이 단계에서 `POOR_LIGHTING_CONDITION` 오류를 반환합니다.
-* **MediaPipe Face Mesh 모듈:** OpenCV 보정 완료 이미지에서 468개 얼굴 랜드마크를 실시간 추출합니다. 이를 통해 피부 영역(볼, 이마), 눈동자 색상 영역, 머리카락 영역을 각각 마스킹(Segmentation)하여 독립적인 컬러 샘플링이 가능한 3개의 ROI(Region of Interest)를 생성합니다. 이 단계가 ONNX 추론의 입력 품질을 결정합니다.
-* **ONNX Runtime 추론 엔진:** MediaPipe가 추출한 피부/눈동자/머리카락 RGB 벡터를 입력으로 받아 4계절 16분류(봄 웜 브라이트, 여름 쿨 뮤트 등) 중 하나를 출력합니다. PyTorch나 TensorFlow 원본 모델 대비 추론 속도가 수배 빠르며, 추론 완료 후 결과 JSON(season_type, main_colors 헥스코드 배열, worst_colors, makeup/hair 큐레이션)을 생성합니다.
-* **K8s emptyDir Memory tmpfs 볼륨:** OpenCV 또는 MediaPipe가 내부적으로 임시 파일을 생성할 경우를 대비해, 파드에 `emptyDir: {medium: Memory, sizeLimit: 1Gi}` 볼륨을 마운트합니다. 이 볼륨은 RAM 기반이므로 파드가 종료되거나 재시작되는 순간 데이터가 물리적으로 완전 소멸합니다. 원본 이미지가 절대 디스크에 기록되지 않음을 K8s 인프라 레벨에서 보장합니다.
-* **Node Taint & Affinity:** `kubectl taint nodes vm3 workload=ai-inference:NoSchedule`로 일반 웹 파드가 이 노드에 올라오지 못하도록 격리합니다. AI 파드에는 `nodeAffinity`로 반드시 VM3에만 배치되도록 강제합니다. 이를 통해 Noisy Neighbor 문제를 원천 차단하고 AI 연산에 CPU/메모리 자원을 100% 보장합니다.
-* **HPA 설정:** CPU 75% 또는 Memory 70% 초과 시 AI Worker 파드 자동 스케일아웃 (단, 로컬 VirtualBox 환경에서는 VM이 1대이므로 파드 복제 수 조정으로 시뮬레이션).
-
----
-
-### 전체 네트워크 구성 요약
-
-```plaintext
-                   [호스트 PC 브라우저]
-    |                                              |
-    | (서비스 접근)                                 | (GitLab Web UI)
-    ↓                                              ↓
-[VM2: Nginx - 56.11]                    [VM4: GitLab - 56.13]
-    |                                              |
-    |    Host-Only Network (192.168.56.0/24)       |
-    |                                              |
-    ├── [VM1: Master/ArgoCD - 56.10] ←── Webhook ──┘
-    |        ↓ GitOps Sync
-    └── [VM3: AI Inference - 56.12]
-
-[모든 VM] ──NAT──→ 인터넷
+```bash
+# 전 노드(VM1, VM2, VM3) 실행
+sudo iptables -t nat -A POSTROUTING -s 10.244.0.0/16 ! -d 10.244.0.0/16 -o enp0s3 -j MASQUERADE
+sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save   # 재부팅 후에도 유지
 ```
 
 ---
 
-### VM4-GitLab CE서버 스펙
+## VM1 — Master Node (Control Plane + ArgoCD)
 
-| 항목 | 설정값 | 이유 |
-| :--- | :--- | :--- |
-| OS | Ubuntu Server22.04LTS(64bit) | GitLab 공식 지원 OS |
-| Base Memory | 6144 MB (6GB) | GitLab 공식 최소 4GB + Sidekiq/CI Runner 여유분 |
-| CPU | 2 vCPU | GitLab 자체는 I/O 위주, 코어보다 메모리가 중요 |
-| 하드디스크 | 100GB (동적 할당 VDI) | Git 레포지토리, CI 아티팩트, Docker 이미지 레이어 누적 |
-| 비디오 메모리 | 16MB | 서버용 최소값 |
+### 스펙
 
-- 하드디스크를 100GB로 넉넉하게 잡는 이유는 GitLab CI가 빌드를 반복할수록 아티팩트와 캐시가 쌓이고, Docker 레이어도 누적되기 때문입니다. 나중에 디스크가 꽉 차서 CI 파이프라인이 멈추는 상황을 방지하기 위함입니다.
+| 항목 | 설정값 |
+|------|--------|
+| OS | Ubuntu Server 22.04 LTS (64-bit) |
+| RAM | 6GB |
+| CPU | 3 vCPU |
+| 디스크 | 50GB (동적 할당 VDI) |
+| 비디오 메모리 | 16MB |
 
-**네트워크 어댑터 구성 (VM4)**
+### 네트워크 어댑터
 
-| 어댑터 | 종류 | 설정 | 용도 |
-| :--- | :--- | :--- | :--- |
-| 어댑터1 | NAT | DHCP자동 | 인터넷접속(GitLab 패키지 설치, Runner 이미지 pull)
-| 어댑터2 | Host-Only Adapter | 고정IP:`192.168.56.13` | VM1(ArgoCD)과 Webhook 통신, VM2/VM3 이미지 push/pull |
-| 어댑터3 | Bridge Adapter | DHCP | 호스트 PC 브라우저에서 GitLab Web UI 접근 |
+| 어댑터 | 종류 | 인터페이스 | IP | 용도 |
+|--------|------|-----------|-----|------|
+| 어댑터1 | NAT | enp0s3 | 10.0.2.15 (DHCP) | 외부 인터넷 (apt, helm, 이미지 pull) |
+| 어댑터2 | 브리지 | enp0s8 | 192.168.10.245 (고정) | K8s 클러스터 내부 통신 |
 
-**VM4의 할당 기능 상세**
+### 할당 기능
 
-* **GitLab CE (Core 서버):** 소스코드 저장소 역할입니다. Next.js 프론트엔드 코드, FastAPI 백엔드 코드, Helm Chart YAML, ONNX 모델 관련 스크립트가 모두 이 VM의 GitLab 레포지토리에서 관리됩니다. 개발자가 코드를 `git push`하는 순간 이후 모든 자동화의 출발점이 됩니다.
-* **GitLab CI Runner:** `.gitlab-ci.yml`에 정의된 파이프라인을 실제로 실행하는 에이전트입니다. 이 프로젝트에서 Runner가 수행하는 작업은 구체적으로 다음과 같습니다. Next.js 빌드 및 Docker 이미지 생성, FastAPI 이미지 빌드, 빌드된 이미지에 버전 태그(예: `v1.0.3`) 부착 후 컨테이너 레지스트리에 push, Helm Chart의 `values.yaml`에서 image tag 값을 새 버전으로 자동 업데이트한 뒤 commit합니다.
-* **GitLab Container Registry:** 빌드된 Docker 이미지를 저장하는 내부 레지스트리입니다. VM2/VM3의 K8s 파드들이 이 레지스트리에서 이미지를 pull하여 컨테이너를 실행합니다. 외부 Docker Hub를 쓰지 않고 내부 레지스트리를 사용하므로 이미지 pull 속도가 빠르고 외부 의존성이 줄어듭니다.
-* **ArgoCD Webhook 수신 트리거:** GitLab CI가 `values.yaml`의 image tag를 업데이트하고 commit/push하면, GitLab이 VM1의 ArgoCD로 Webhook을 발송합니다. ArgoCD는 이 신호를 받고 변경된 Helm Chart를 K8s 클러스터에 즉시 적용(Sync)합니다. 이것이 `git push` 한 번으로 VM2/VM3의 파드가 무중단 교체되는 GitOps 자동화의 전체 흐름입니다.
+**K8s Control Plane 전담**
+- `kube-apiserver` — 모든 kubectl/API 요청 수신
+- `etcd` — 클러스터 전체 상태 KV 저장소
+- `kube-scheduler` — Pod 배치 노드 결정
+- `kube-controller-manager` — ReplicaSet, Deployment 상태 조정
 
+**ArgoCD 운영**
+- GitLab 저장소의 Helm Chart 감시
+- values.yaml 또는 Chart 변경 감지 시 VM2/VM3에 Rolling Update 자동 실행
+- 접속: `http://192.168.10.246:30080` (NodePort)
 
-- 💡 호스트 PC RAM이 32GB라면 VM에 30GB를 할당하면 호스트 OS가 불안정해질 수 있습니다. 호스트 OS용으로 최소 6~8GB는 남겨두어야 하므로, 호스트 RAM이 32GB라면 VM3의 메모리를 10GB로 줄이거나, VM2를 6GB로 낮추는 조정이 필요합니다. 가능하다면 호스트 RAM 40GB 이상 환경을 권장합니다.
+**kubeadm init 실행**
+```bash
+kubeadm init \
+  --apiserver-advertise-address=192.168.10.245 \
+  --pod-network-cidr=10.244.0.0/16
+```
+
+**Flannel CNI 설정**
+```bash
+# ⚠️ VirtualBox 환경에서 Flannel이 enp0s3(NAT)을 선택할 수 있음
+# kube-flannel DaemonSet에 --iface=enp0s8 옵션 추가 필수
+```
+
+---
+
+## VM2 — Worker Node: Web/API Pool
+
+### 스펙
+
+| 항목 | 설정값 |
+|------|--------|
+| OS | Ubuntu Server 22.04 LTS (64-bit) |
+| RAM | 8GB |
+| CPU | 4 vCPU |
+| 디스크 | 80GB (동적 할당 VDI) |
+| 비디오 메모리 | 16MB |
+
+### 네트워크 어댑터
+
+| 어댑터 | 종류 | 인터페이스 | IP | 용도 |
+|--------|------|-----------|-----|------|
+| 어댑터1 | NAT | enp0s3 | 10.0.2.15 (DHCP) | 외부 인터넷 (이미지 pull, npm 패키지) |
+| 어댑터2 | 브리지 | enp0s8 | 192.168.10.246 (고정) | K8s 클러스터 내부 통신 + 호스트 PC 브라우저 접근 |
+
+> 기존 설계의 어댑터3(Bridge — 브라우저 테스트용)은 **어댑터2(브리지)로 통합** 운영됩니다.  
+> 브리지 어댑터가 클러스터 내부 통신과 외부 브라우저 접근을 모두 담당합니다.
+
+### 할당 기능
+
+**Nginx Ingress Controller**
+- 외부 트래픽 단일 진입점 (External IP: 192.168.10.136)
+- `/api/*` → FastAPI Pod, 그 외 → Next.js Pod 경로 기반 라우팅
+- rewrite 불필요 — backend가 `/api/...` 형태로 엔드포인트 정의
+
+**Next.js Pod**
+- `/login`, `/capture`, `/analyzing`, `/result/[id]`, `/mypage/history` 5개 화면 담당
+- Zustand로 capturedImage, jobId, resultId, analysisResult 전역 상태 관리
+- 현재 MOCK 데이터 사용 중 → Phase 6에서 실제 API 연동 예정
+
+**FastAPI Backend Pod**
+- POST /api/analyze, GET /api/status/{job_id}, GET /api/result/{result_id}, GET /api/history 처리
+- BackgroundTask로 AI Worker(VM3)에 분석 위임
+- asyncpg로 PostgreSQL 비동기 연결
+
+**PostgreSQL StatefulSet**
+- 데이터 경로: VM2 `/data/postgresql`
+- PV: 5Gi, local type, VM2 nodeAffinity 고정
+- 원본 이미지 절대 저장 금지 — 비식별 결과값(컬러 코드, 시즌 타입)만 보관
+
+**Node 설정**
+```bash
+# 레이블
+kubectl label node ubuntu-k8s-web role=web
+
+# AI 파드 배치 방지
+kubectl taint nodes ubuntu-k8s-web dedicated=web:NoSchedule
+```
+
+**HPA**
+- color-ai-frontend: CPU 60%, min 1, max 4
+- color-ai-backend: CPU 60%, min 1, max 4
+
+---
+
+## VM3 — Worker Node: AI Inference Pool
+
+### 스펙
+
+| 항목 | 설정값 |
+|------|--------|
+| OS | Ubuntu Server 22.04 LTS (64-bit) |
+| RAM | 12GB |
+| CPU | 4 vCPU |
+| 디스크 | 60GB (동적 할당 VDI) |
+| 비디오 메모리 | 16MB |
+
+> ⚠️ **VM3 RAM이 가장 높은 이유:**  
+> 이미지를 디스크 대신 메모리(BytesIO)에서 처리하는 Privacy-First 설계 +  
+> ONNX 모델 파일 로딩 + MediaPipe Face Mesh 동시 운용
+
+### 네트워크 어댑터
+
+| 어댑터 | 종류 | 인터페이스 | IP | 용도 |
+|--------|------|-----------|-----|------|
+| 어댑터1 | NAT | enp0s3 | 10.0.2.15 (DHCP) | 외부 인터넷 (pip install, ONNX 모델 다운로드) |
+| 어댑터2 | 브리지 | enp0s8 | 192.168.10.247 (고정) | K8s 클러스터 내부 통신 전용 |
+
+> VM3은 외부 직접 접근 불필요. 모든 요청은 VM2 FastAPI → ClusterIP를 통해 내부 전달.
+
+### 할당 기능
+
+**AI Worker FastAPI Pod**
+- POST /analyze 수신 → OpenCV → MediaPipe → ONNX 추론 파이프라인 실행
+- 현재: OpenCV 기반 간이 분석 fallback 동작 중 (ONNX 모델 미적용 — Phase 6 예정)
+
+**AI 분석 파이프라인**
+
+```
+이미지 수신
+  │
+  ▼
+OpenCV 화이트밸런스 보정
+(Gray World 알고리즘 — 조명 환경 정규화)
+  │
+  ▼
+MediaPipe Face Mesh
+(468개 랜드마크 추출 → 피부/눈동자/머리카락 ROI 분리)
+  │
+  ▼
+ONNX Runtime 추론
+(4계절 분류 → season, palette, makeup, hair, fashion 생성)
+현재: OpenCV fallback 동작 중
+  │
+  ▼
+del image_bytes  ← Privacy-First: 원본 이미지 즉시 파기
+```
+
+**Privacy-First 물리적 보장**
+- 원본 이미지는 메모리(BytesIO)에서만 처리
+- 분석 완료 즉시 `del image_bytes` 실행
+- 디스크 저장 절대 금지
+
+**Node 설정**
+```bash
+# 레이블
+kubectl label node ubuntu-k8s-ai role=ai
+
+# 일반 웹 파드 배치 방지 (AI 전용 격리)
+kubectl taint nodes ubuntu-k8s-ai dedicated=ai:NoSchedule
+```
+
+**HPA**
+- color-ai-ai-worker: CPU 70%, min 1, max 3
+
+**AI Worker 현재 상태**
+
+| 모듈 | 상태 |
+|------|------|
+| OpenCV 전처리 | ✅ 동작 중 |
+| MediaPipe 랜드마크 | ✅ 동작 중 |
+| ONNX 추론 | ⏳ Phase 6 예정 |
+| Privacy-First 파기 | ✅ `del image_bytes` 적용 |
+
+---
+
+## VM4 — GitLab CE 서버
+
+### 스펙
+
+| 항목 | 설정값 |
+|------|--------|
+| OS | Ubuntu Server 22.04 LTS (64-bit) |
+| RAM | 8GB |
+| CPU | 4 vCPU |
+| 디스크 | 100GB (동적 할당 VDI) |
+| 비디오 메모리 | 16MB |
+
+> 디스크 100GB 이유: CI 빌드 반복 시 아티팩트 + Docker 레이어 누적으로 디스크 부족 방지
+
+### 네트워크 어댑터
+
+| 어댑터 | 종류 | 인터페이스 | IP | 용도 |
+|--------|------|-----------|-----|------|
+| 어댑터1 | NAT | enp0s3 | 10.0.2.15 (DHCP) | 외부 인터넷 (GitLab 패키지 설치, Runner 이미지 pull) |
+| 어댑터2 | 브리지 | enp0s8 | 192.168.10.248 (고정) | VM1 ArgoCD Webhook 통신, VM2/VM3 이미지 push/pull, 호스트 GitLab Web UI 접근 |
+
+### 할당 기능
+
+**GitLab CE**
+- 소스코드 저장소: frontend, backend, ai-worker 앱 코드 + Helm Chart
+- 개발자 `git push` 시 전체 자동화의 출발점
+- GitLab URL: `http://192.168.10.248`
+
+**GitLab Container Registry**
+- 빌드된 Docker 이미지 저장 (내부 레지스트리)
+- Registry URL: `http://192.168.10.248:5050`
+- VM2/VM3 K8s Pod들이 이 레지스트리에서 이미지 pull
+
+| 서비스 | 이미지 경로 |
+|--------|------------|
+| frontend | 192.168.10.248:5050/root/color-ai-frontend |
+| backend | 192.168.10.248:5050/root/color-ai-backend |
+| ai-worker | 192.168.10.248:5050/root/color-ai-ai-worker |
+
+**GitLab CI Runner**
+- executor: docker
+- tag: color-ai
+- 핵심 설정: `pull_policy=["if-not-present"]`, MTU 1400, `--network=host`
+
+**ArgoCD Webhook 연동**
+```
+GitLab CI → Registry push
+  → GitLab이 VM1 ArgoCD로 Webhook 발송
+  → ArgoCD Helm Chart 변경 감지 → K8s 자동 Sync
+  → VM2/VM3 Pod Rolling Update (무중단 배포)
+```
+
+---
+
+## 전체 네트워크 구성도
+
+```
+                    [호스트 PC 브라우저 / 사용자]
+                              │
+                              │ http://192.168.10.136
+                              ▼
+                    [MetalLB → Nginx Ingress]
+                       VM2 (192.168.10.246)
+                              │
+          ┌───────────────────┴───────────────────┐
+          │                                       │
+    [Next.js Pod]                          [FastAPI Pod]
+       (VM2)                                   (VM2)
+                                               │
+                              ┌────────────────┴──────────────────┐
+                              │                                    │
+                    [AI Worker Pod]                    [PostgreSQL StatefulSet]
+                        (VM3)                               (VM2)
+                   192.168.10.247                      192.168.10.246
+
+    브리지 네트워크 (192.168.10.0/24)
+    ├── VM1 (192.168.10.245) — PC-A  ← ArgoCD GitOps
+    ├── VM2 (192.168.10.246) — PC-B  ← Web/API
+    ├── VM3 (192.168.10.247) — PC-B  ← AI Inference
+    └── VM4 (192.168.10.248) — PC-A  ← GitLab CI/CD
+
+    [모든 VM] ──NAT(enp0s3)──→ 인터넷
+```
+
+---
+
+## 클러스터 구성 명령어 요약
+
+### kubeadm init (VM1)
+```bash
+kubeadm init \
+  --apiserver-advertise-address=192.168.10.245 \
+  --pod-network-cidr=10.244.0.0/16
+```
+
+### 워커 노드 합류 (VM2, VM3)
+```bash
+# VM1에서 토큰 재발급 (만료 시)
+kubeadm token create --print-join-command
+
+# VM2, VM3에서 실행
+kubeadm join 192.168.10.245:6443 --token ... --discovery-token-ca-cert-hash ...
+```
+
+### 노드 레이블 및 Taint (VM1)
+```bash
+kubectl label node ubuntu-k8s-web  role=web
+kubectl label node ubuntu-k8s-ai   role=ai
+
+kubectl taint nodes ubuntu-k8s-web dedicated=web:NoSchedule
+kubectl taint nodes ubuntu-k8s-ai  dedicated=ai:NoSchedule
+```
+
+### Flannel CNI 설치 (VM1)
+```bash
+# ⚠️ --iface=enp0s8 옵션 추가 필수 (브리지 인터페이스 고정)
+kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+# kube-flannel DaemonSet args에 "--iface=enp0s8" 추가
+```
+
+### MetalLB 설치 (VM1)
+```bash
+helm repo add metallb https://metallb.github.io/metallb
+helm install metallb metallb/metallb --namespace metallb-system --create-namespace
+# IPAddressPool: 192.168.10.136 ~ 192.168.10.152
+```
+
+### Nginx Ingress Controller 설치 (VM1)
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm install ingress-nginx ingress-nginx/ingress-nginx
+# External IP: 192.168.10.136 (MetalLB 할당)
+```
+
+---
+
+## swap 비활성화 (전 노드 필수)
+
+```bash
+# K8s 요구사항 — swap 활성화 시 kubelet 실행 불가
+sudo swapoff -a
+sudo sed -i '/swap/s/^/#/' /etc/fstab   # 재부팅 후에도 유지
+```
+
+---
+
+## 기존 설계 대비 실제 구현 변경사항
+
+| 항목 | 기존 설계 | 실제 구현 |
+|------|----------|----------|
+| 클러스터 내부 통신 | Host-Only (192.168.56.x) | **브리지 (192.168.10.x)** |
+| VM 개수 | 3대 (GitLab 미포함) | **4대 (VM4 GitLab 별도)** |
+| VM1 RAM | 4GB | **6GB** |
+| VM4 RAM | — | **8GB** |
+| VM4 CPU | — | **4 vCPU** |
+| VM2 어댑터3 (브라우저 테스트) | Bridge 별도 | **어댑터2 브리지로 통합** |
+| Pod 외부 인터넷 | 미언급 | **iptables MASQUERADE 필수** |
+| Flannel iface | 미지정 | **enp0s8 고정 필수** |
