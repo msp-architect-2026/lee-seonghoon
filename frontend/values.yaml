@@ -1,0 +1,78 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: 192.168.10.248:5050/root/color-ai-frontend
+  tag: "latest"
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+  automount: false
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: www.color-ai.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+  rules: []
+  annotations: {}
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60
+
+nodeSelector:
+  workload: web
+
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+livenessProbe: {}
+readinessProbe: {}
+
+volumes: []
+volumeMounts: []
+
+env:
+  NEXTAUTH_URL: "http://www.color-ai.com"
+  NEXTAUTH_SECRET: "change-me-in-production"
+  NEXT_PUBLIC_API_URL: "http://www.color-ai.com/api"
+  NEXT_PUBLIC_POLL_INTERVAL_MS: "1000"

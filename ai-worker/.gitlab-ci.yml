@@ -1,0 +1,18 @@
+stages:
+  - build
+
+variables:
+  IMAGE: "192.168.10.248:5050/root/color-ai-ai-worker"
+
+build:
+  stage: build
+  tags:
+    - color-ai
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"192.168.10.248:5050\":{\"auth\":\"$(echo -n root:${GITLAB_PAT} | base64 -w 0)\"}}}" > ~/.docker/config.json
+    - ip link set dev eth0 mtu 1400 || true
+  script:
+    - docker build --network=host -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest .
+    - docker push ${IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${IMAGE}:latest
