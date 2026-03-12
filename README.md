@@ -28,7 +28,7 @@ Team 07 - MSP Architect Training 2026
 12. [진행 현황](#12-진행-현황)
 13. [운영 가이드](#13-운영-가이드)
 14. [데이터 보안 정책](#14-데이터-보안-정책)
-
+[wiki](https://github.com/msp-architect-2026/lee-seonghoon/wiki/AI-Personal-Color-WIKI)
 ---
 
 ## 1. 프로젝트 소개
