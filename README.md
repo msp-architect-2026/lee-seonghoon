@@ -261,7 +261,7 @@ ArgoCD (VM1)
 ## 10. API 명세
 
 | Method | Endpoint | 설명 | 응답 |
-|----|-------|-----------|-----------|
+|----|----|-----------|--------|
 | GET | `/api/health` | 헬스체크 (DB 상태 포함) | `{"status":"ok","db":"ok"}` |
 | POST | `/api/analyze` | 이미지 업로드 → 분석 시작 | `{"job_id":"...","status":"queued"}` (202) |
 | GET | `/api/status/{job_id}` | 분석 진행 상태 폴링 | `{"status":"done","result_id":"..."}` |
