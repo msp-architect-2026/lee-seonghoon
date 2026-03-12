@@ -1,95 +1,372 @@
 # team-07
 Team 07 - MSP Architect Training 2026
-# 🎨 Personal Color AI Analysis Application
+# 🎨 Personal Color AI Analysis
 
-## 📖 1. 프로젝트 소개 (Project Overview)
-본 프로젝트는 사용자의 안면 이미지를 분석하여 4계절(봄, 여름, 가을, 겨울) 퍼스널 컬러를 진단하고, 맞춤형 컬러 팔레트(메이크업, 의상, **헤어 염색 추천 컬러** 등)를 제공하는 **AI 기반 Mobile-First 웹 애플리케이션**입니다.
+> 사용자의 안면 이미지를 분석하여 4계절 퍼스널 컬러를 진단하고,  
+> 맞춤형 컬러 팔레트 · 메이크업 · 헤어 · 패션 추천을 제공하는 AI 기반 Mobile-First 웹 애플리케이션
 
-무거운 AI 분석이 진행되는 동안 v0.app을 활용한 화려한 UI 컴포넌트로 사용자의 지루함을 상쇄하며, 도출된 결과는 화면의 70% 이상을 차지하는 시각적 타격감으로 제공됩니다. 백엔드와 인프라는 Kubernetes(K8s), Helm, GitOps 기반으로 구축되어 잦은 UI 개편과 AI 가중치 업데이트에도 무중단 배포 및 트래픽 자동 확장이 가능한 견고한 아키텍처를 자랑합니다. 특히 원본 이미지를 영구 저장하지 않는 프라이버시 중심(Privacy-First) 설계로 사용자의 신뢰를 확보합니다.
-
----
-
-## 🏗️ 2. 시스템 아키텍처 (System Architecture)
-
-시스템은 엔터프라이즈급 안정성과 확장성을 지향합니다. 대규모 트래픽과 무거운 AI 연산을 효율적으로 처리하기 위해 역할에 따라 계층이 철저히 분리되어 있으며, Helm Chart를 통해 복잡한 인프라 배포를 규격화했습니다. 불필요한 외부 스토리지 의존성을 제거하여 가볍고 독립적인 운영이 가능합니다.
-
-### 🧩 계층별 핵심 구성 요소 (Core Components by Layer)
-
-**1. Frontend Layer (사용자 접점)**
-* `Next.js`: **[사용하는 이유]** 모바일 최우선 반응형 렌더링 및 빠른 초기 로딩 속도(SSR/SSG)를 확보하여 사용자 이탈을 막기 위함.
-* `Tailwind CSS` & `v0.app`: **[사용하는 이유]** AI 대기 시간을 상쇄할 화려하고 인터랙티브한 UI 컴포넌트를 고속으로 추출하고 일관된 스타일링을 적용하기 위함.
-* `Zustand`: **[사용하는 이유]** 카메라 조명 상태, 로딩 진행률 등 클라이언트의 복잡한 전역 상태를 보일러플레이트 없이 가장 가볍게 관리하기 위함.
-* `NextAuth.js`: **[사용하는 이유]** 소셜 로그인(OAuth)을 손쉽게 구현하여 사용자별 진단 이력(DB)을 정확히 매핑하기 위함.
-
-**2. Network & Routing Layer (관문 계층)**
-* `Nginx Ingress Controller`: **[사용하는 이유]** 외부 트래픽을 K8s 내부로 받아들이고, 도메인 패스(`/api`, `/`)에 따라 프론트엔드와 백엔드 파드로 정확히 라우팅(L7 로드밸런싱)하기 위함.
-* `MetalLB(Loadbalancer)`: 클러스터의 대문을 만드는 도구로, 베어메탈(가상머신 포함)환경에서는 외부 IP를 자동으로 할당해주는 기능이 없는데, MetalLB가 그 역할을 대신하여 외부 사용자가 서비스에 접속할 수 있는 통로를 열어줌.
-
-**3. API & Business Layer (통신 및 비즈니스)**
-* `FastAPI`: **[사용하는 이유]** Python 생태계의 AI 라이브러리와 완벽히 호환되며, 비동기 처리에 강력하여 병목 현상 없이 요청을 수용하기 위함.
-* `BackgroundTasks` (FastAPI 내장): **[사용하는 이유]** 별도의 무거운 메시지 큐 시스템을 구축하는 오버헤드를 줄이고, AI 연산을 넌블로킹(Non-blocking) 백그라운드 작업으로 넘겨 API 응답성을 확보하기 위함.
-
-**4. AI Analysis Layer (지능형 분석 엔진)**
-* `OpenCV`: **[사용하는 이유]** 시스템 정확도의 가장 큰 변수인 '조명'을 정규화하고 화이트밸런스를 보정하여 데이터 일관성을 맞추기 위함.
-* `MediaPipe`: **[사용하는 이유]** 리소스를 적게 차지하면서도 얼굴 랜드마크(피부, 눈동자, 머리카락 영역)를 초고속으로 분리해내기 위함.
-* `ONNX Runtime`: **[사용하는 이유]** Kaggle에서 가져온 무거운 모델(PyTorch/TF)을 최적화된 포맷으로 변환하여, 추론 속도를 1초 이내로 단축하고 K8s 파드의 메모리 비용을 획기적으로 절감하기 위함.
-
-**5. Data Layer (데이터 저장소)**
-* `PostgreSQL`: **[사용하는 이유]** 단순 1회성 앱을 넘어 사용자 메타데이터, 진단된 컬러 코드, 누적 통계 등 관계형 데이터를 무결성 있게 보관하기 위함. (민감한 안면 원본 이미지는 스토리지 유지보수 및 개인정보 보호를 위해 영구 저장하지 않고 처리 직후 파기합니다.)
-
-**6. DevOps & Infrastructure Layer (인프라 및 배포)**
-* `Kubernetes (K8s)`: **[사용하는 이유]** 컨테이너 오케스트레이션을 통해 트래픽 스파이크 발생 시 파드(Pod)를 자동 스케일아웃하여 서버 다운을 원천 차단하기 위함.
-* `Helm Chart`: **[사용하는 이유]** 복잡한 K8s 매니페스트(YAML)를 패키징하고 `values.yaml`로 변수화하여, Dev/Staging/Prod 환경별 배포를 규격화하고 관리 효율성을 극대화하기 위함.
-* `GitLab CI` & `ArgoCD`: **[사용하는 이유]** 코드가 푸시되면 즉시 K8s 클러스터 상태를 동기화하는 GitOps 환경을 구축하여 무중단 지속적 배포(CD)를 실현하기 위함.
-* `Flannel(CNI)`: **[사용하는 이유]** 클러스터 내부의 혈관같은 역할로, 각 노드에 흩어져있는 파드들이 서로 통신할 수 있게 '오버레이 네트워크'를 구성, Calico 대신 Flannel을 사용하여 인프라 구성을 보다 원할하게 진행할 수 있도록 함.
----
-
-## 🛠️ 3. 기술 스택 선정의 핵심 의사결정 (Key Tech Rationale)
-
-* **프라이버시 중심 데이터 설계 (No Object Storage):** 초기에는 이미지 저장을 고려했으나, K8s 환경을 가볍게 유지하고 개인정보 이슈를 원천 차단하기 위해 원본 이미지는 메모리에서 분석 후 즉시 파기합니다. 대신 분석 결과(도출된 컬러값, 텍스트 데이터)만 PostgreSQL에 저장하여 인프라 유지 비용을 극적으로 낮췄습니다.
-* **UI/UX와 상태 관리:** AI 대기 시간을 시각적 즐거움으로 바꾸기 위해 v0.app으로 화려한 컴포넌트를 고속 생성합니다. 이러한 컴포넌트 간 '분석 진행률' 상태를 가볍게 공유하기 위해 Zustand를 채택했습니다.
-* **AI 서빙 경량화 (ONNX 활용):** 관리 포인트를 줄이기 위해 무거운 분류 모델을 **ONNX 포맷으로 변환**했습니다. 이를 FastAPI의 `BackgroundTasks`와 결합하여 초고속 추론과 서버 응답성을 동시에 확보했습니다.
-* **배포 자동화 (Helm + ArgoCD):** 마이크로서비스 개수가 늘어남에 따라 순수 YAML로는 관리에 한계가 있습니다. **Helm Chart**를 도입해 배포 템플릿을 표준화하고 ArgoCD와 연동함으로써, 압도적으로 유연하고 안정적인 GitOps 무중단 배포 체계를 완성했습니다.
+![Phase](https://img.shields.io/badge/Phase-5%20Complete-brightgreen)
+![E2E](https://img.shields.io/badge/E2E%20Test-Passed-brightgreen)
+![K8s](https://img.shields.io/badge/Infra-Kubernetes-blue)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 ---
 
-## 🚀 4. 핵심 데이터 파이프라인 (Data Pipeline)
+## 📋 목차
 
-정확도를 결정짓는 **'사용자의 조명 환경'**을 통제하기 위해 인과적 피드백 루프를 적용했습니다.
-
-1. **촬영 단계 (Light Feedback):** 사용자가 앱의 가이드라인에 맞춰 사진을 찍을 때, UI 단에서 조명 상태를 즉각 평가합니다. 너무 어둡거나 역광일 경우 재촬영을 유도합니다.
-2. **로딩 단계 (Visual Masking):** 이미지가 서버로 인입되면, FastAPI는 즉시 응답을 반환하고 백그라운드 분석을 시작합니다. 이 시간 동안 프론트엔드는 v0.app 기반의 화려한 스캔 애니메이션을 재생하여 체감 대기 시간을 지워버립니다.
-3. **추론 단계 (High-Speed Inference):** OpenCV로 전처리된 이미지가 MediaPipe를 거친 뒤, ONNX Runtime을 통과하여 찰나의 순간에 4계절 컬러와 헤어/메이크업 추천 데이터를 추출합니다. 원본 이미지는 이 단계가 끝나면 즉시 파기됩니다.
-4. **결과 단계 (Impactful UI):** 최종 도출된 컬러 팔레트가 화면의 70% 이상을 차지하며 시각적 카타르시스를 제공하고, 도출된 결과 텍스트 데이터만 PostgreSQL에 안전하게 저장됩니다.
-
----
-
-## 🌟 5. 프로젝트 핵심 기능 (Core Features)
-
-**1. 실시간 조명 진단 및 스마트 캡쳐 (Smart Capture & Light Feedback)**
-   * 기능 설명: 퍼스널 컬러 진단의 정확도를 떨어뜨리는 가장 큰 원인인 '잘못된 조명'을 시스템이 능동적으로 차단합니다.
-   * 작동 방식: 사용자가 카메라를 켜고 얼굴 가이드라인에 맞추는 순간, 프론트엔드 로직이 이미지의 명도와 대비를 즉각 평가합니다. 역광이거나 너무 어두울 경우 "조명이 너무 어둡습니다. 밝은 곳으로 이동해 주세요"라는 피드백을 주어 재촬영을 유도합니다.
-
-**2.초고속 AI 4계절 컬러 추론 (High-Speed AI Inference)**
-   * 기능 설명: 촬영된 이미지를 바탕으로 사용자의 퍼스널 컬러를 1초 내에 빠르고 정확하게 진단합니다.
-   * 작동 방식: 서버로 인입된 이미지는 OpenCV를 통해 화이트밸런스가 보정되고, MediaPipe가 눈동자, 피부, 머리카락 영역을 정밀하게 분리해 냅니다. 이후 이 데이터가 최적화된 ONNX Runtime 모델을 통과하며 즉각적인 진단 결과를 도출해 냅니다.
-
-**3. 시각적 타격감이 극대화된 맞춤형 스타일 큐레이션 (Impactful Curation)**
-   * 기능 설명: 딱딱한 텍스트 결과가 아닌, 시각적 즐거움과 실용적인 스타일링 가이드를 제공합니다.
-   * 작동 방식: 도출된 퍼스널 컬러에 맞는 컬러 팔레트가 모바일 화면의 70% 이상을 가득 채우며 시각적 카타르시스를 제공합니다. 더불어 해당 컬러에 어울리는 메이크업 톤, 의상 스타일링뿐만 아니라 사용자 맞춤형 헤어 컬러 추천까지 아우르는 종합 뷰티 큐레이션을 제공합니다.
-
-**4. 지루함 제로의 인터랙티브 로딩 (Zero-Boredom Loading UX)**
-   * 기능 설명: 백엔드에서 무거운 AI 연산이 진행되는 1~2초의 틈을 시각적 즐거움으로 메웁니다.
-   * 작동 방식: API 응답을 기다리는 동안 단순한 스피너(빙글빙글 도는 아이콘)를 보여주는 대신, v0.app으로 고속 추출한 세련된 컴포넌트(예: 얼굴 영역을 스캔하는 레이저 애니메이션 등)을 렌더링하여 사용자의 이탈을 막고 기대감을 증폭시킵니다.
-
-**5. 프라이버시 안심 데이터 처리 (Privacy-First Processing)**
-   * 기능 설명: 사용자의 가장 민감한 개인정보인 '안면 원본 이미지'를 서버에 남기지 않아 보안과 신뢰성을 확보할 수 있습니다.
-   * 작동 방식: 업로드된 이미지는 메모리 상에서 AI분석을 마치는 즉시 파기(Volatile)됩니다. 데이터베이스(PostgreSQL)에는 사용자를 식별할 수 없는 메타데이터와 최종 도출된 컬러 텍스트 정보만 안전하게 누적되어, 통계 및 진단 이력 제공 목적으로만 활용됩니다.
+1. [프로젝트 소개](#1-프로젝트-소개)
+2. [핵심 3원칙](#2-핵심-3원칙)
+3. [시스템 아키텍처](#3-시스템-아키텍처)
+4. [기술 스택](#4-기술-스택)
+5. [인프라 환경](#5-인프라-환경)
+6. [네트워크 설계](#6-네트워크-설계)
+7. [핵심 기능](#7-핵심-기능)
+8. [데이터 파이프라인](#8-데이터-파이프라인)
+9. [CI/CD 파이프라인](#9-cicd-파이프라인)
+10. [API 명세](#10-api-명세)
+11. [DB 스키마](#11-db-스키마)
+12. [진행 현황](#12-진행-현황)
+13. [운영 가이드](#13-운영-가이드)
+14. [데이터 보안 정책](#14-데이터-보안-정책)
 
 ---
 
-## 🔧 6. 운영 및 유지보수 가이드 (Operations Guide)
+## 1. 프로젝트 소개
 
-* **UI/UX 텍스트 및 디자인 변경:** v0.app을 통해 새로운 React 코드를 추출하고 깃랩에 푸시합니다. 파이프라인이 빌드를 마치면, ArgoCD가 Helm Chart의 Image Tag 변경을 감지하여 K8s 프론트엔드 Pod를 무중단 배포(Rolling Update) 합니다.
-* **AI 모델 가중치 업데이트:** Kaggle에서 추가 학습을 진행한 후, 가중치 파일을 ONNX로 변환하여 레지스트리에 업데이트합니다. K8s 파드가 재시작 없이 새 가중치를 동적으로 로드하도록 구성하여 AI 업데이트로 인한 서비스 단절을 막습니다.
-* **트래픽 급증 대응 (스케일링):** 사용자 접속이 폭주할 경우, K8s HPA(Horizontal Pod Autoscaler)가 파드의 CPU/메모리 사용량을 감지하여 FastAPI 및 Next.js 파드 개수를 자동으로 늘립니다. 관리자의 수동 개입 없이 시스템 스스로 안정성을 유지합니다.
+무거운 AI 분석이 진행되는 동안 레이저 스캔 애니메이션으로 대기 시간을 상쇄하고,  
+도출된 결과는 화면의 **70% 이상을 컬러 팔레트**로 채워 시각적 카타르시스를 제공합니다.
+
+백엔드와 인프라는 **Kubernetes + Helm + GitOps** 기반으로 구축되어  
+잦은 UI 개편과 AI 가중치 업데이트에도 **무중단 배포 및 트래픽 자동 확장**이 가능합니다.
+
+---
+
+## 2. 핵심 3원칙
+
+| 원칙 | 설명 |
+|------|------|
+| 🔒 **Privacy-First** | 원본 안면 이미지는 메모리에서만 처리 후 즉시 파기. 결과값(컬러 코드)만 DB 저장 |
+| ⚡ **Zero-Boredom UX** | AI 대기 1~2초를 레이저 스캔 애니메이션으로 대체. 단순 스피너 사용 전면 금지 |
+| 🎨 **Impactful Curation** | 결과 화면 70% 이상을 컬러 팔레트로 채워 시각적 카타르시스 제공 |
+
+---
+
+## 3. 시스템 아키텍처
+
+```
+사용자
+  │
+  ▼
+MetalLB (192.168.10.136)          ← 베어메탈 LoadBalancer
+  │
+  ▼
+Nginx Ingress Controller (VM2)    ← L7 라우팅
+  ├── /          → Next.js Pod        [color-ai-frontend:3000]
+  └── /api       → FastAPI Pod        [color-ai-backend:8000]
+                       │
+                       ├── AI Worker Pod (VM3) [color-ai-ai-worker:8001]
+                       │     └── OpenCV → MediaPipe → ONNX Runtime
+                       │
+                       └── PostgreSQL Pod (VM2) [postgresql-svc:5432]
+```
+
+### 계층별 구성 요소
+
+| 계층 | 기술 | 역할 |
+|------|------|------|
+| Frontend | Next.js, Tailwind CSS, Zustand | Mobile-First UI, 전역 상태 관리 |
+| Network | MetalLB, Nginx Ingress | 외부 IP 할당, L7 라우팅 |
+| API | FastAPI, BackgroundTasks | 비동기 요청 처리, AI 작업 위임 |
+| AI | OpenCV, MediaPipe, ONNX Runtime | 이미지 전처리, 얼굴 분석, 퍼스널 컬러 추론 |
+| Data | PostgreSQL (StatefulSet) | 비식별 결과값 영구 저장 |
+| DevOps | GitLab CI, ArgoCD, Helm, Flannel | GitOps 무중단 배포, 오토스케일링 |
+
+---
+
+## 4. 기술 스택
+
+### Frontend
+- **Next.js** (App Router) — SSR/SSG 기반 Mobile-First 렌더링
+- **TypeScript** — 타입 안정성 확보
+- **Tailwind CSS** — 일관된 스타일링
+- **Zustand** — 경량 전역 상태 관리
+- **NextAuth.js** — OAuth 소셜 로그인
+
+### Backend
+| 패키지 | 버전 | 용도 |
+|--------|------|------|
+| fastapi | 0.115.0 | 웹 프레임워크 |
+| uvicorn[standard] | 0.30.0 | ASGI 서버 |
+| python-multipart | 0.0.9 | 파일 업로드 |
+| httpx | 0.27.0 | AI Worker HTTP 호출 |
+| asyncpg | 0.29.0 | PostgreSQL 비동기 드라이버 |
+
+### AI Worker
+| 패키지 | 버전 | 비고 |
+|--------|------|------|
+| opencv-python-headless | 4.10.0.84 | 화이트밸런스 보정 |
+| mediapipe | 0.10.9 | 얼굴 랜드마크 추출 (⚠️ 0.10.14 사용 금지 — numpy 충돌) |
+| onnxruntime | 1.19.2 | 퍼스널 컬러 추론 |
+| numpy | 1.26.4 | |
+| Pillow | 10.4.0 | |
+
+### Infrastructure
+- **Kubernetes** — 컨테이너 오케스트레이션, HPA 오토스케일링
+- **Helm** — K8s 배포 템플릿 관리
+- **Flannel** — Pod 간 오버레이 네트워크 (CNI)
+- **MetalLB** — 베어메탈 LoadBalancer
+- **Nginx Ingress** — L7 라우팅
+- **GitLab CE** — 소스 관리 + Container Registry + CI Runner
+- **ArgoCD** — GitOps 기반 지속적 배포
+
+---
+
+## 5. 인프라 환경
+
+### 물리 구성
+
+| 구분 | 값 |
+|------|-----|
+| 물리 PC | 2대 |
+| 공유기 게이트웨이 | 192.168.10.1 |
+| PC-A 호스트 IP | 192.168.10.75 |
+| PC-B 호스트 IP | 192.168.10.39 |
+| VM 어댑터1 | NAT (enp0s3) — 외부 인터넷 |
+| VM 어댑터2 | 브리지 (enp0s8) — 클러스터 내부 통신 |
+
+### VM 구성
+
+| VM | 호스트명 | IP | 물리 PC | 역할 |
+|----|----------|----|---------|------|
+| VM1 | ubuntu-k8s-master | 192.168.10.245 | PC-A | K8s Master, ArgoCD, Helm |
+| VM2 | ubuntu-k8s-web | 192.168.10.246 | PC-B | Nginx Ingress, Next.js, FastAPI, PostgreSQL |
+| VM3 | ubuntu-k8s-ai | 192.168.10.247 | PC-B | AI Worker (OpenCV, MediaPipe, ONNX) |
+| VM4 | ubuntu-k8s-gitlab | 192.168.10.248 | PC-A | GitLab CE, CI Runner, Container Registry |
+
+---
+
+## 6. 네트워크 설계
+
+| 구분 | 값 |
+|------|-----|
+| K8s Pod 대역 | 10.244.0.0/16 (Flannel) |
+| K8s Service 대역 | 10.96.0.0/12 |
+| MetalLB IP 풀 | 192.168.10.136 ~ 192.168.10.152 |
+| Nginx Ingress External IP | 192.168.10.136 |
+| ArgoCD NodePort | 192.168.10.246:30080 |
+
+### Pod 외부 인터넷 연결 설정
+
+> ⚠️ Pod 트래픽이 enp0s8(브리지)로 나가면 공유기에서 차단됨 → iptables MASQUERADE 필수
+
+```bash
+sudo iptables -t nat -A POSTROUTING -s 10.244.0.0/16 ! -d 10.244.0.0/16 -o enp0s3 -j MASQUERADE
+sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save
+```
+
+---
+
+## 7. 핵심 기능
+
+### 1) 실시간 조명 진단 및 스마트 캡처
+카메라를 켜고 얼굴을 가이드라인에 맞추는 순간, 프론트엔드가 이미지 명도와 대비를 즉각 평가합니다.  
+역광이거나 너무 어두울 경우 재촬영을 유도하여 **분석 정확도**를 사전에 확보합니다.
+
+### 2) 초고속 AI 4계절 컬러 추론
+서버로 인입된 이미지는 **OpenCV 화이트밸런스 보정 → MediaPipe 랜드마크 추출 → ONNX 추론** 순으로 처리됩니다.
+
+| 계절 | 특징 |
+|------|------|
+| 🌸 Spring | 밝고 따뜻한 톤 |
+| ☀️ Summer | 밝고 차가운 톤 |
+| 🍂 Autumn | 깊고 따뜻한 톤 |
+| ❄️ Winter | 깊고 차가운 톤 |
+
+### 3) 시각적 타격감의 맞춤형 큐레이션
+도출된 팔레트가 화면의 **70% 이상**을 채우며, 메이크업 · 헤어 · 패션 종합 큐레이션을 Bottom Sheet로 제공합니다.
+
+**분석 결과 샘플 (Autumn)**
+```
+season  : autumn (가을 웜톤)
+palette : #D2691E, #CD853F, #8B4513, #556B2F, #DAA520
+lip     : 따뜻한 브라운/핑크 계열
+shadow  : 브라운 계열
+hair    : 골든 브라운 (골든 8 : 코퍼 2)
+fashion : 내추럴 & 웜, 어스톤 & 카키
+```
+
+### 4) Zero-Boredom 로딩 UX
+API 응답 대기 중 단순 스피너 대신 **레이저 스캔 애니메이션**을 렌더링하여 체감 대기 시간을 제거합니다.
+
+### 5) Privacy-First 데이터 처리
+업로드된 이미지는 메모리에서 분석 후 **즉시 파기** (`del image_bytes`).  
+PostgreSQL에는 컬러 코드, 시즌 타입, 타임스탬프 등 **비식별 결과값만** 저장됩니다.
+
+---
+
+## 8. 데이터 파이프라인
+
+```
+[캡처 단계]  사용자 촬영 → 조명 상태 즉각 평가 → 재촬영 유도
+      │
+      ▼
+[인입 단계]  POST /api/analyze → job_id 즉시 반환 (202)
+             BackgroundTask로 AI Worker 위임
+      │
+      ▼
+[분석 단계]  OpenCV 화이트밸런스 보정
+             → MediaPipe 얼굴 랜드마크 추출 (ROI 분리)
+             → ONNX Runtime 4계절 분류 추론
+             → 원본 이미지 즉시 파기 (del image_bytes)
+      │
+      ▼
+[저장 단계]  결과 JSONB → PostgreSQL jobs 테이블 저장 (status=done)
+      │
+      ▼
+[결과 단계]  GET /api/result/{result_id} → 팔레트 70% 화면 렌더링
+```
+
+---
+
+## 9. CI/CD 파이프라인
+
+```
+코드 push (GitLab)
+  │
+  ▼
+GitLab CI Runner (VM4)
+  ├── docker build --network=host
+  ├── ip link set dev eth0 mtu 1400
+  └── docker push → Registry (192.168.10.248:5050)
+  │
+  ▼
+ArgoCD (VM1)
+  └── Helm Chart 변경 감지 → K8s 자동 Sync
+        ├── color-ai-frontend (VM2)
+        ├── color-ai-backend (VM2)
+        └── color-ai-ai-worker (VM3)
+```
+
+### HPA 설정
+
+| 서비스 | CPU 타겟 | Min | Max | 배포 노드 |
+|--------|---------|-----|-----|----------|
+| color-ai-frontend | 60% | 1 | 4 | VM2 |
+| color-ai-backend | 60% | 1 | 4 | VM2 |
+| color-ai-ai-worker | 70% | 1 | 3 | VM3 |
+
+---
+
+## 10. API 명세
+
+| Method | Endpoint | 설명 | 응답 |
+|--------|----------|------|------|
+| GET | `/api/health` | 헬스체크 (DB 상태 포함) | `{"status":"ok","db":"ok"}` |
+| POST | `/api/analyze` | 이미지 업로드 → 분석 시작 | `{"job_id":"...","status":"queued"}` (202) |
+| GET | `/api/status/{job_id}` | 분석 진행 상태 폴링 | `{"status":"done","result_id":"..."}` |
+| GET | `/api/result/{result_id}` | 분석 결과 조회 | season, palette, makeup, hair, fashion |
+| GET | `/api/history` | 진단 이력 목록 | 완료된 job 목록 |
+
+---
+
+## 11. DB 스키마
+
+```sql
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id      TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'queued',  -- queued / processing / done / failed
+    result_id   TEXT,
+    result      JSONB,
+    error       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**DB 연결 정보**
+```
+postgresql://colorai:****@postgresql-svc:5432/colorai_db
+```
+
+---
+
+## 12. 진행 현황
+
+### 마일스톤
+
+| Phase | 내용 | 상태 |
+|-------|------|------|
+| Phase 1 | 인프라 셋업 (VM, K8s, Network) | ✅ 완료 |
+| Phase 2 | 코어 API & AI 파이프라인 | ✅ 완료 |
+| Phase 3 | 프론트엔드 (Next.js, Zustand) | ✅ 완료 |
+| Phase 4 | CI/CD & GitOps (GitLab CI, ArgoCD) | ✅ 완료 |
+| Phase 5 | DB & E2E 테스트 | ✅ 완료 |
+| Phase 6 | 도메인 연결 & ONNX 모델 적용 | ⏳ 진행 예정 |
+
+### 현재 Pod 상태
+
+| Pod | 상태 | 비고 |
+|-----|------|------|
+| color-ai-frontend | ✅ Running | MOCK → 실제 API 연동 예정 (Phase 6) |
+| color-ai-backend | ✅ Running | PostgreSQL 연동 완료 |
+| color-ai-ai-worker | ✅ Running | OpenCV fallback 동작 중, ONNX 미적용 |
+| postgresql-0 | ✅ Running | StatefulSet, VM2 고정 |
+
+### E2E 테스트 결과 (Phase 5 완료)
+
+| 단계 | 테스트 | 결과 |
+|------|--------|------|
+| 1 | POST /api/analyze | ✅ job_id 반환 |
+| 2 | GET /api/status/{job_id} | ✅ status: done |
+| 3 | GET /api/result/{result_id} | ✅ 전체 필드 반환 |
+| 4 | PostgreSQL 저장 확인 | ✅ JSONB 저장 확인 |
+| 5 | GET /api/history | ✅ 이력 목록 반환 |
+
+---
+
+## 13. 운영 가이드
+
+### 터미널 재시작 시 체크리스트 (VM1)
+
+```bash
+kubectl get nodes
+GITLAB_PAT="YOUR_GITLAB_PAT"
+ARGOCD_PASSWORD="YOUR_ARGOCD_PASSWORD"
+argocd login 192.168.10.246:30080 --username admin --password ${ARGOCD_PASSWORD} --insecure
+argocd app list
+```
+
+### UI 변경 배포
+```bash
+# 코드 수정 후 GitLab push → CI 자동 실행 → ArgoCD 자동 Sync
+git add . && git commit -m "feat: update UI" && git push
+```
+
+### AI 모델 업데이트
+```bash
+# ONNX 모델 변환 후 /app/models/에 배치
+# AI Worker Pod 재시작으로 새 모델 로드
+kubectl rollout restart deployment/color-ai-ai-worker
+```
+
+### 트래픽 급증 대응
+HPA가 CPU 사용량 기반으로 자동 스케일아웃합니다. 수동 개입 불필요.
+
+```bash
+# HPA 상태 확인
+kubectl get hpa
+```
+
+---
+
+## 14. 데이터 보안 정책
+
+| 항목 | 정책 |
+|------|------|
+| 안면 이미지 처리 | 서버 메모리(BytesIO)에서만 처리, 디스크 기록 없음 |
+| 이미지 파기 시점 | ONNX 추론 함수 종료 즉시 (`del image_bytes`) |
+| DB 저장 데이터 | 컬러 코드(Hex), 시즌 타입, 타임스탬프 등 **비식별 결과값만** |
+| 금지 항목 | 원본 이미지 디스크 저장, S3 등 오브젝트 스토리지 연동 일체 금지 |
+
+---
