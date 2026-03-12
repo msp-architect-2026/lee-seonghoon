@@ -1,0 +1,15 @@
+stages:
+  - build
+
+variables:
+  IMAGE: "192.168.10.248:5050/root/color-ai-frontend"
+
+build:
+  stage: build
+  tags:
+    - color-ai
+  script:
+    - docker build -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest .
+    - docker login -u root -p ${GITLAB_PAT} 192.168.10.248:5050
+    - docker push ${IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${IMAGE}:latest

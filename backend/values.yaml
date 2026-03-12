@@ -1,0 +1,79 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: 192.168.10.248:5050/root/color-ai-backend
+  tag: "latest"
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+  automount: false
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  hosts:
+    - host: www.color-ai.com
+      paths:
+        - path: /api
+          pathType: Prefix
+  tls: []
+
+httpRoute:
+  enabled: false
+  parentRefs: []
+  hostnames: []
+  rules: []
+  annotations: {}
+
+resources:
+  requests:
+    cpu: "300m"
+    memory: "512Mi"
+  limits:
+    cpu: "800m"
+    memory: "1Gi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60
+
+nodeSelector:
+  workload: web
+
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+livenessProbe: {}
+readinessProbe: {}
+
+volumes: []
+volumeMounts: []
+
+env:
+  DATABASE_URL: "postgresql://colorai:colorai_pw@postgresql-svc:5432/colorai_db"
+  AI_WORKER_URL: "http://color-ai-ai-worker:8001"
+  ENVIRONMENT: "production"
