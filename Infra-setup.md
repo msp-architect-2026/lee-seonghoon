@@ -155,6 +155,13 @@ network:
 ### 적용
 
 ```bash
+# 문법검사
+sudo netplan generage
+
+# 보안 Warning 출력 시
+sudo chmod 600 /etc/netplan/00-installer-config.yaml
+
+# 적용
 sudo netplan apply
 
 # 확인
