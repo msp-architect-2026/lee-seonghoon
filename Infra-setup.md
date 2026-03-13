@@ -339,9 +339,47 @@ kubectl get nodes   # STATUS: NotReady (CNI 미설치 상태 — 정상)
 
 ---
 
-## Step 6 — Flannel CNI 설치 및 enp0s8 고정
+## Step 6 — Flannel CNI/MetalLB 설치 및 enp0s8 고정
 
 **대상: VM1만 실행**
+
+```bash
+# MetalLB 설치
+kubectl apply -f \
+  https://raw.githubusercontent.com/metallb/metallb/v0.13.12/config/manifests/metallb-native.yaml
+
+# 파드가 Running될 때까지 대기 (1~2분 소요)
+kubectl get pods -n metallb-system --watch
+
+# controller와 speaker 파드 모두 Running이 되면 진행
+```
+
+*MetalLB IP 풀 설정*
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: local-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.10.136-192.168.10.152
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: local-advertisement
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - local-pool
+EOF
+```
+
+# 확인
+kubectl get ipaddresspool -n metallb-system
 
 ```bash
 # Flannel 설치
