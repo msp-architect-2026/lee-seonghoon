@@ -76,14 +76,15 @@ network:
   ethernets:
     enp0s3:
       dhcp4: true
+    dhcp4-overrides:
+        route-metric: 200
     enp0s8:
       dhcp4: no
-      addresses:
-        - 192.168.10.245/24
+      addresses: [192.168.10.245/24]
       routes:
         - to: default
           via: 192.168.10.1
-          metric: 200
+          metric: 100
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
 ```
@@ -96,14 +97,15 @@ network:
   ethernets:
     enp0s3:
       dhcp4: true
+    dhcp4-overrides:
+        route-metric: 200
     enp0s8:
       dhcp4: no
-      addresses:
-        - 192.168.10.246/24
+      addresses: [192.168.10.246/24]
       routes:
         - to: default
           via: 192.168.10.1
-          metric: 200
+          metric: 100
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
 ```
@@ -116,16 +118,17 @@ network:
   ethernets:
     enp0s3:
       dhcp4: true
-    enp0s8:
-      dhcp4: no
-      addresses:
-        - 192.168.10.247/24
-      routes:
-        - to: default
-          via: 192.168.10.1
-          metric: 200
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+      dhcp4-overrides:
+          route-metric: 200
+      enp0s8:
+        dhcp4: no
+        addresses: [192.168.10.247/24]
+        routes:
+          - to: default
+            via: 192.168.10.1
+            metric: 100
+        nameservers:
+          addresses: [8.8.8.8, 8.8.4.4]
 ```
 
 **VM4 (ubuntu-k8s-gitlab / 192.168.10.248)**
@@ -136,16 +139,17 @@ network:
   ethernets:
     enp0s3:
       dhcp4: true
-    enp0s8:
-      dhcp4: no
-      addresses:
-        - 192.168.10.248/24
-      routes:
-        - to: default
-          via: 192.168.10.1
-          metric: 200
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+      dhcp4-overrides:
+          route-metric: 200
+      enp0s8:
+        dhcp4: no
+        addresses: [192.168.10.248/24]
+        routes:
+          - to: default
+            via: 192.168.10.1
+            metric: 100
+        nameservers:
+          addresses: [8.8.8.8, 8.8.4.4]
 ```
 
 ### 적용
